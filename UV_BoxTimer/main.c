@@ -35,19 +35,37 @@ typedef enum
 	RUN
 }SYSTEM_STATE_t;
 
+typedef enum
+{
+	TURN_OFF,
+	TURN_ON
+}DIGIT_BLINK_STATE_t;
+
+typedef enum
+{
+	IDLE,
+	ONES,
+	TENS,
+	HUNDREDS,
+	THOUSANDS
+}DIGIT_STATE_t;
+
 /* CA segment LUT */
 const uint8_t segArray[] = {0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90};
 	
 SYSTEM_STATE_t systemState = STOP;
 uint16_t OK_BTN_ConfidenceLow = 0, UP_BTN_ConfidenceLow = 0, DN_BTN_ConfidenceLow = 0;
 volatile uint8_t minutes = 1, seconds = 0, ovfs = 0;
-uint8_t storedMinutes = 0, storedSeconds = 0;
+uint8_t storedMinutes = 0, storedSeconds = 0, one = 0, ten = 0, hundred = 0, thousand = 0;
+DIGIT_STATE_t digitIndex = IDLE;
+DIGIT_BLINK_STATE_t digitBlinkState = TURN_ON;
 
 void systemInit(void);
 void segmentWrite(uint8_t data);
 void displayWrite();
 uint8_t isBTN_Pressed(BTN_t btn);
 void timerCBK(void);
+void timer2CBK(void);
 
 int main(void)
 {
@@ -62,16 +80,56 @@ int main(void)
 		case STOP:
 			if(isBTN_Pressed(UP_BTN) == HIGH)
 			{
-				if(seconds < 59)
-					seconds++;
+				if(digitIndex == ONES)
+				{
+					if(one < 9)
+						one++;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == TENS)
+				{
+					if(ten < 5)
+						ten++;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == HUNDREDS)
+				{
+					if(hundred < 9)
+						hundred++;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == THOUSANDS)
+				{
+					if(thousand < 5)
+						thousand++;
+					else
+					{
+						/* Do nothing */
+					}
+				}
 				else
 				{
-					seconds = 0;
-					if(minutes < 59)
-						minutes++;
-					else
-						minutes = 0;
+					storedMinutes = minutes;
+					storedSeconds = seconds;
+					systemState = RUN;
+					/* Start timer */
+					Timer_Start(TIMER_CH0, 0);
+					/* Engage relay */
+					DIO_Write(RELAY_GPIO, RELAY_PIN, HIGH);
+					/* Turn on LED */
+					DIO_Write(LED_GPIO, LED_PIN, HIGH);
 				}
+				seconds = one + (ten * 10);
+				minutes = hundred + (thousand * 10);
 			}
 			else
 			{
@@ -79,16 +137,48 @@ int main(void)
 			}
 			if(isBTN_Pressed(DN_BTN) == HIGH)
 			{
-				if(seconds > 0)
-				seconds--;
+				if(digitIndex == ONES)
+				{
+					if(one > 0)
+						one--;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == TENS)
+				{
+					if(ten > 0)
+						ten--;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == HUNDREDS)
+				{
+					if(hundred > 0)
+						hundred--;
+					else
+					{
+						/* Do nothing */
+					}
+				}
+				else if(digitIndex == THOUSANDS)
+				{
+					if(thousand > 0)
+						thousand--;
+					else
+					{
+						/* Do nothing */
+					}
+				}
 				else
 				{
-					seconds = 59;
-					if(minutes > 0)
-					minutes--;
-					else
-					minutes = 59;
+					/* Do nothing */
 				}
+				seconds = one + (ten * 10);
+				minutes = hundred + (thousand * 10);
 			}
 			else
 			{
@@ -96,15 +186,31 @@ int main(void)
 			}
 			if(isBTN_Pressed(OK_BTN) == HIGH)
 			{
-				storedMinutes = minutes;
-				storedSeconds = seconds;
-				/* Start timer */
-				Timer_Start(TIMER_CH0, 0);
-				/* Engage relay */
-				DIO_Write(RELAY_GPIO, RELAY_PIN, HIGH);
-				/* Turn on LED */
-				DIO_Write(LED_GPIO, LED_PIN, HIGH);
-				systemState = RUN;
+				if(digitIndex == IDLE)
+				{
+					digitIndex = ONES;
+					/* Start blink timer */
+					Timer_Start(TIMER_CH0, 0);
+				}
+				else if(digitIndex == ONES)
+				{
+					digitIndex = TENS;
+				}
+				else if(digitIndex == TENS)
+				{
+					digitIndex = HUNDREDS;
+				}
+				else if(digitIndex == HUNDREDS)
+				{
+					digitIndex = THOUSANDS;
+				}
+				else
+				{
+					digitIndex = IDLE;
+					/* Stop blink timer */
+					Timer_Stop(TIMER_CH0);
+					ovfs = 0;
+				}
 			}
 			else
 			{
@@ -122,39 +228,59 @@ int main(void)
 
 void timerCBK(void)
 {
-	if(ovfs < ONE_SEC_OVS)
-		ovfs++;
-	else
+	if(systemState == RUN)
 	{
-		ovfs = 0;
-		if(seconds > 0)
-		{
-			seconds--;
-		}
+		if(ovfs < ONE_SEC_OVS)
+			ovfs++;
 		else
 		{
-			if(minutes > 0)
+			ovfs = 0;
+			if(seconds > 0)
 			{
-				minutes--;
-				seconds = 59;
+				seconds--;
 			}
 			else
 			{
-				/* timer expired */
-				systemState = STOP;
-				/* Disengage relay */
-				DIO_Write(RELAY_GPIO, RELAY_PIN, LOW);
-				/* Turn off LED */
-				DIO_Write(LED_GPIO, LED_PIN, LOW);
-				minutes = storedMinutes;
-				seconds = storedSeconds;
-				Timer_Stop(TIMER_CH0);
-				/* Store timer value into EEPROM */
-				EEPROM_update(MINUTE_EE_ADDR, minutes);
-				EEPROM_update(SECOND_EE_ADDR, seconds);
+				if(minutes > 0)
+				{
+					minutes--;
+					seconds = 59;
+				}
+				else
+				{
+					/* timer expired */
+					systemState = STOP;
+					/* Disengage relay */
+					DIO_Write(RELAY_GPIO, RELAY_PIN, LOW);
+					/* Turn off LED */
+					DIO_Write(LED_GPIO, LED_PIN, LOW);
+					digitIndex = IDLE;
+					minutes = storedMinutes;
+					seconds = storedSeconds;
+					Timer_Stop(TIMER_CH0);
+					/* Store timer value into EEPROM */
+					EEPROM_update(MINUTE_EE_ADDR, minutes);
+					EEPROM_update(SECOND_EE_ADDR, seconds);
+				}
 			}
+			one = seconds % 10;
+			ten= seconds / 10;
+			hundred = minutes % 10;
+			thousand= minutes / 10;
 		}
-		
+	}
+	else
+	{
+		if(ovfs < 50)
+			ovfs++;
+		else
+		{
+			ovfs = 0;
+			if(digitBlinkState == TURN_OFF)
+				digitBlinkState = TURN_ON;
+			else
+				digitBlinkState = TURN_OFF;
+		}
 	}
 }
 
@@ -257,6 +383,19 @@ void displayWrite()
 {
 	/* Display minutes tens */
 	segmentWrite((uint8_t)((minutes / 10) % 10));
+	if(digitIndex == THOUSANDS)
+	{
+		if(digitBlinkState == TURN_OFF)
+		{
+			DIO_Write(SEGMENT_A_GPIO, SEGMENT_A_PIN, HIGH);
+			DIO_Write(SEGMENT_B_GPIO, SEGMENT_B_PIN, HIGH);
+			DIO_Write(SEGMENT_C_GPIO, SEGMENT_C_PIN, HIGH);
+			DIO_Write(SEGMENT_D_GPIO, SEGMENT_D_PIN, HIGH);
+			DIO_Write(SEGMENT_E_GPIO, SEGMENT_E_PIN, HIGH);
+			DIO_Write(SEGMENT_F_GPIO, SEGMENT_F_PIN, HIGH);
+			DIO_Write(SEGMENT_G_GPIO, SEGMENT_G_PIN, HIGH);
+		}
+	}
 	DIO_Write(DISPLAY_1_GPIO, DISPLAY_1_PIN, LOW);
 	DIO_Write(DISPLAY_2_GPIO, DISPLAY_2_PIN, HIGH);
 	DIO_Write(DISPLAY_3_GPIO, DISPLAY_3_PIN, HIGH);
@@ -265,6 +404,19 @@ void displayWrite()
 	
 	/* Display minutes ones */
 	segmentWrite((uint8_t)(minutes % 10));
+	if(digitIndex == HUNDREDS)
+	{
+		if(digitBlinkState == TURN_OFF)
+		{
+			DIO_Write(SEGMENT_A_GPIO, SEGMENT_A_PIN, HIGH);
+			DIO_Write(SEGMENT_B_GPIO, SEGMENT_B_PIN, HIGH);
+			DIO_Write(SEGMENT_C_GPIO, SEGMENT_C_PIN, HIGH);
+			DIO_Write(SEGMENT_D_GPIO, SEGMENT_D_PIN, HIGH);
+			DIO_Write(SEGMENT_E_GPIO, SEGMENT_E_PIN, HIGH);
+			DIO_Write(SEGMENT_F_GPIO, SEGMENT_F_PIN, HIGH);
+			DIO_Write(SEGMENT_G_GPIO, SEGMENT_G_PIN, HIGH);
+		}
+	}
 	DIO_Write(SEGMENT_DP_GPIO, SEGMENT_DP_PIN, LOW);
 	DIO_Write(DISPLAY_1_GPIO, DISPLAY_1_PIN, HIGH);
 	DIO_Write(DISPLAY_2_GPIO, DISPLAY_2_PIN, LOW);
@@ -274,6 +426,19 @@ void displayWrite()
 	
 	/* Display seconds tens */
 	segmentWrite((uint8_t)((seconds / 10) % 10));
+	if(digitIndex == TENS)
+	{
+		if(digitBlinkState == TURN_OFF)
+		{
+			DIO_Write(SEGMENT_A_GPIO, SEGMENT_A_PIN, HIGH);
+			DIO_Write(SEGMENT_B_GPIO, SEGMENT_B_PIN, HIGH);
+			DIO_Write(SEGMENT_C_GPIO, SEGMENT_C_PIN, HIGH);
+			DIO_Write(SEGMENT_D_GPIO, SEGMENT_D_PIN, HIGH);
+			DIO_Write(SEGMENT_E_GPIO, SEGMENT_E_PIN, HIGH);
+			DIO_Write(SEGMENT_F_GPIO, SEGMENT_F_PIN, HIGH);
+			DIO_Write(SEGMENT_G_GPIO, SEGMENT_G_PIN, HIGH);
+		}
+	}
 	DIO_Write(SEGMENT_DP_GPIO, SEGMENT_DP_PIN, HIGH);
 	DIO_Write(DISPLAY_1_GPIO, DISPLAY_1_PIN, HIGH);
 	DIO_Write(DISPLAY_2_GPIO, DISPLAY_2_PIN, HIGH);
@@ -283,6 +448,19 @@ void displayWrite()
 	
 	/* Display seconds ones */
 	segmentWrite((uint8_t)(seconds % 10));
+	if(digitIndex == ONES)
+	{
+		if(digitBlinkState == TURN_OFF)
+		{
+			DIO_Write(SEGMENT_A_GPIO, SEGMENT_A_PIN, HIGH);
+			DIO_Write(SEGMENT_B_GPIO, SEGMENT_B_PIN, HIGH);
+			DIO_Write(SEGMENT_C_GPIO, SEGMENT_C_PIN, HIGH);
+			DIO_Write(SEGMENT_D_GPIO, SEGMENT_D_PIN, HIGH);
+			DIO_Write(SEGMENT_E_GPIO, SEGMENT_E_PIN, HIGH);
+			DIO_Write(SEGMENT_F_GPIO, SEGMENT_F_PIN, HIGH);
+			DIO_Write(SEGMENT_G_GPIO, SEGMENT_G_PIN, HIGH);
+		}
+	}
 	DIO_Write(DISPLAY_1_GPIO, DISPLAY_1_PIN, HIGH);
 	DIO_Write(DISPLAY_2_GPIO, DISPLAY_2_PIN, HIGH);
 	DIO_Write(DISPLAY_3_GPIO, DISPLAY_3_PIN, HIGH);
@@ -400,4 +578,10 @@ void systemInit(void)
 	EEPROM_read(SECOND_EE_ADDR, &storedSeconds);
 	minutes = storedMinutes;
 	seconds = storedSeconds;
+	
+	one = (seconds % 10);
+	ten= ((seconds / 10) % 10);
+	hundred = (minutes % 10);
+	thousand= ((minutes / 10) % 10);
+	
 }
